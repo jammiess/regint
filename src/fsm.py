@@ -5,7 +5,7 @@ Finite state machine library
 from typing import Any, Set, Dict
 
 
-class UnspecifiedTransition:
+class UnspecifiedCharacter:
     """
     Allows finite state machines to use this as a transition
     symbol that represents anything not explicitly specified
@@ -19,11 +19,7 @@ class UnspecifiedTransition:
         return "unspecified"
 
 
-unspecified = UnspecifiedTransition()
-
-
-def key(symbol):
-    return (symbol is unspecified, symbol)
+unspecified = UnspecifiedCharacter()
 
 
 class OblivionError(Exception):
@@ -115,7 +111,7 @@ class FSM:
         whitespace = set(['\n', '\t', ' ', '\r', '\f'])
         row.extend(str(symbol) if symbol not in whitespace else
                    repr(symbol)[1:-1] for symbol in
-                   sorted(self.alphabet, key=key))
+                   self.alphabet)
         rows.append(row)
 
         # other rows
@@ -130,7 +126,7 @@ class FSM:
                 row.append("True")
             else:
                 row.append("False")
-            for symbol in sorted(self.alphabet, key=key):
+            for symbol in self.alphabet:
                 if (state in self.transition and
                         symbol in self.transition[state]):
                     row.append(str(self.transition[state][symbol]))
@@ -178,7 +174,7 @@ class FSM:
             initial.update(connect_all(0, fsms[0].initial))
         initial = frozenset(initial)
 
-        def final(state):
+        def accepts(state):
             """
             Test if state is accepting in last fsm
             """
@@ -198,7 +194,7 @@ class FSM:
                 raise OblivionError
             return frozenset(next_states)
 
-        return crawl(alphabet, initial, final, follow)
+        return crawl(alphabet, initial, accepts, follow)
 
     def __add__(self, other):
         return self.concatenate(other)
@@ -227,10 +223,10 @@ class FSM:
 
             return frozenset(next_states)
 
-        def final(state):
+        def accepts(state):
             return any(substate in self.accepting for substate in state)
 
-        base = crawl(alphabet, initial, final, follow)
+        base = crawl(alphabet, initial, accepts, follow)
         num_states = len(base.states)
         base.accepting.add(num_states)
         base.transition[num_states] = base.transition[base.initial]
@@ -250,7 +246,7 @@ class FSM:
         alphabet = self.alphabet
         initial = {(self.initial, 0)}
 
-        def final(state):
+        def accepts(state):
             for (substate, iteration) in state:
                 if ((substate == self.initial) and
                         (self.initial in self.accepting or
@@ -271,7 +267,7 @@ class FSM:
                 raise OblivionError
             return frozenset(next_states)
 
-        return crawl(alphabet, initial, final, follow)
+        return crawl(alphabet, initial, accepts, follow)
 
     def __mul__(self, multiplier):
         return self.times(multiplier)
@@ -311,10 +307,10 @@ class FSM:
                 next_states[0] = self.transition[current[0]][symbol]
             return next_states
 
-        def final(state):
+        def accepts(state):
             return not (0 in state and state[0] in self.accepting)
 
-        return crawl(alphabet, initial, final, follow)
+        return crawl(alphabet, initial, accepts, follow)
 
     def reversed(self):
         alphabet = self.alphabet
@@ -332,10 +328,10 @@ class FSM:
                 raise OblivionError
             return next_states
 
-        def final(state):
+        def accepts(state):
             return self.initial in state
 
-        return crawl(alphabet, initial, final, follow)
+        return crawl(alphabet, initial, accepts, follow)
 
     def __reversed__(self):
         return self.reversed()
@@ -389,7 +385,7 @@ class FSM:
         while i < len(strings):
             (cstring, cstate) = strings[i]
             if cstate in self.transition:
-                for symbol in sorted(self.transition[cstate], key=key):
+                for symbol in self.transition[cstate]:
                     nstate = self.transition[cstate][symbol]
                     nstring = cstring + [symbol]
                     if nstate in livestates:
@@ -530,15 +526,15 @@ def parallel(fsms, test):
             raise OblivionError
         return next_states
 
-    def final(state, fsm_range=tuple(enumerate(fsms))):
+    def accepts(state, fsm_range=tuple(enumerate(fsms))):
         accepts = [i in state and state[i] in fsm.accepting
                    for (i, fsm) in fsm_range]
         return test(accepts)
 
-    return crawl(alphabet, initial, final, follow)
+    return crawl(alphabet, initial, accepts, follow)
 
 
-def crawl(alphabet, initial, final, follow):
+def crawl(alphabet, initial, accepts, follow):
     """
     Create a new FSM from the above conditions.
     """
@@ -551,7 +547,7 @@ def crawl(alphabet, initial, final, follow):
     while i < len(states):
         state = states[i]
 
-        if final(state):
+        if accepts(state):
             accepting.add(i)
 
         transition[i] = dict()
