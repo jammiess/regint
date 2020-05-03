@@ -40,6 +40,9 @@ class ABCReggy:
     def __reversed__(self):
         return self.reversed()
 
+    def __str__(self):
+        return self.__repr__()
+
 
 class Bound:
     """
@@ -71,7 +74,7 @@ class Bound:
     @classmethod
     def match(cls, string, i=0):
         b = 0
-        match = False
+        found = False
         # First try matching for integers
         try:
             while i < len(string):
@@ -79,11 +82,11 @@ class Bound:
                 b *= 10
                 b += v
                 i += 1
-                match = True
+                found = True
         except ValueError:
             pass
 
-        if match:
+        if found:
             return cls(b), i
         else:
             return cls(None), i
@@ -96,7 +99,7 @@ class Bound:
             return False
 
     def __hash__(self):
-        return hash(self.v)
+        return hash(self.bound)
 
     def __lt__(self, other):
         if not isinstance(other, Bound):
@@ -153,12 +156,6 @@ class Bound:
         return Bound(self.bound)
 
 
-# define some useful bounds to have handy
-zero = Bound(0)
-one = Bound(1)
-inf = Bound(None)
-
-
 class Multiplier:
     """
     A set of bounds such as the entirety of {3,10}.
@@ -192,13 +189,16 @@ class Multiplier:
 
     @classmethod
     def match(cls, string, i=0):
+        # If at end of string just return {1, 1}
+        if i >= len(string):
+            return cls(Bound(1), Bound(1)), i
         # First check if multiplier is a special character
-        if string[i] == "?":
-            return cls(zero, one), i + 1
+        elif string[i] == "?":
+            return cls(Bound(0), Bound(1)), i + 1
         elif string[i] == "*":
-            return cls(zero, inf), i + 1
+            return cls(Bound(0), Bound(None)), i + 1
         elif string[i] == "+":
-            return cls(one, inf), i + 1
+            return cls(Bound(1), Bound(None)), i + 1
 
         # Check if curly brackets
         if string[i] == "{":
@@ -210,14 +210,14 @@ class Multiplier:
             # Then string[j] must be a comma.
             # If string[j + 1] is a } then it's lower - inf
             if string[j + 1] == "}":
-                return cls(lower, inf), j + 2
+                return cls(lower, Bound(None)), j + 2
 
             # Last case is to parse the second part of the {}
             upper, j = Bound.match(string, j + 1)
             return cls(lower, upper), j + 1
 
-        # if none of those things were found then parse error
-        raise NotParseable
+        # if none of those things were found then return {1,1}
+        return cls(Bound(1), Bound(1)), i
 
     @classmethod
     def parse(cls, string):
@@ -234,8 +234,8 @@ class Multiplier:
         """
         Range multiplication is wacky.
         """
-        return (other.optional == zero or
-                self.optional * other.mandatory + one >= self.mandatory)
+        return (other.optional == Bound(0) or
+                self.optional * other.mandatory + Bound(1) >= self.mandatory)
 
     def __mul__(self, other):
         if not self.canmultiply(other):
@@ -286,7 +286,14 @@ class Multiplier:
         return Multiplier(self.minimum.copy(), self.maximum.copy())
 
 
-def Conc(ABCReggy):
+zero = Multiplier(Bound(0), Bound(0))
+qm = Multiplier(Bound(0), Bound(1))
+one = Multiplier(Bound(1), Bound(1))
+star = Multiplier(Bound(0), Bound(None))
+plus = Multiplier(Bound(1), Bound(None))
+
+
+class Conc(ABCReggy):
     """
     Concatenation of Mults.
     """
@@ -304,7 +311,7 @@ def Conc(ABCReggy):
 
     def __repr__(self):
         string = "conc("
-        string += ", ".join(repr(m) for m in self.mults)
+        string += "\n".join(repr(m) for m in self.mults)
         string += ")"
         return string
 
@@ -346,15 +353,26 @@ def Conc(ABCReggy):
         return False
 
     def __str__(self):
-        return "".join(str(m) for m in self.mults)
+        return self.__repr__()
 
     @classmethod
     def match(cls, string, i=0):
         mults = list()
-        return mults
+
+        m, i = Mult.match(string, i)
+        while m is not None and i < len(string) and string[i] != "|":
+            mults.append(m)
+            m, i = Mult.match(string, i)
+
+        if m is not None:
+            mults.append(m)
+
+        if len(mults) == 0:
+            return None, i
+        return Conc(*mults), i
 
 
-def Mult(ABCReggy):
+class Mult(ABCReggy):
     """
     Combination of character matching and a multiplier.
     """
@@ -375,7 +393,7 @@ def Mult(ABCReggy):
     def __repr__(self):
         string = "mult("
         string += repr(self.multiplicand)
-        string += ", " + repr(self.multiplier)
+        string += "\n" + repr(self.multiplier)
         string += ")"
         return string
 
@@ -423,7 +441,7 @@ def Mult(ABCReggy):
         unit = self.multiplicand.to_fsm(alphabet)
         mandatory = unit * self.multiplier.mandatory.bound
 
-        if self.multiplier.optional == inf:
+        if self.multiplier.optional == Bound(None):
             optional = unit.star()
         else:
             optional = fsm.epsilon(alphabet) | unit
@@ -433,11 +451,16 @@ def Mult(ABCReggy):
 
     @classmethod
     def match(cls, string, i=0):
-        if string[i] == "(":
+        if i == len(string):
+            return None, i
+        elif string[i] == "(":
             multiplicand, j = Pattern.match(string, i + 1)
+            assert string[j] == ")"
             j += 1
         else:
             multiplicand, j = CharacterClass.match(string, i)
+            if multiplicand is None:
+                return None, i
         multiplier, j = Multiplier.match(string, j)
         return cls(multiplicand, multiplier), j
 
@@ -446,15 +469,6 @@ def Mult(ABCReggy):
 
     def copy(self):
         return Mult(self.multiplicand.copy(), self.muliplier.copy())
-
-
-escapes = {
-    "\t": r"\t",
-    "\n": r"\n",
-    "\v": r"\v",
-    "\f": r"\f",
-    "\r": r"\r"
-}
 
 
 class CharacterClass(ABCReggy):
@@ -558,12 +572,18 @@ class CharacterClass(ABCReggy):
             if i + len(shorthand[k]) <= len(string):
                 if string[i:i + len(shorthand[k])] == shorthand[k]:
                     return k, i + len(shorthand[k])
-        return None, -1
+        return None, i
 
-    def match_unit(string, i=0):
+    def match_unit(string, i=0, brackets=False):
         cc, j = CharacterClass.match_wildcard(string, i)
         if cc is not None:
             return cc, j
+        elif string[i] == "|" and brackets:
+            return "|", i + 1
+        elif string[i] == "|" and not brackets:
+            return None, i
+        elif string[i] == '-' and not brackets:
+            return '-', i + 1
         elif string[i] == '-':
             s = ord(string[i - 1]) + 1
             e = ord(string[i + 1]) + 1
@@ -576,7 +596,7 @@ class CharacterClass(ABCReggy):
         elif string[i] == '\\':
             return string[i + 1], i + 2
         elif string[i] in CharacterClass.special1:
-            raise NotParseable
+            return None, i
         else:
             return string[i], i + 1
 
@@ -589,9 +609,11 @@ class CharacterClass(ABCReggy):
 
         chars = []
         while i < end:
-            c, i = CharacterClass.match_unit(string, i)
+            c, i = CharacterClass.match_unit(string, i, True)
             chars.append(c)
 
+        if None in chars:
+            return None, start
         cc = reduce(lambda x, y: x.union(y),
                     map(lambda x: x if isinstance(x, CharacterClass)
                         else CharacterClass(x), chars))
@@ -614,6 +636,8 @@ class CharacterClass(ABCReggy):
             return CharacterClass.match_bracket(string, i + 1, end)
 
         c, i = CharacterClass.match_unit(string, i)
+        if c is None:
+            return None, i
         if not isinstance(c, CharacterClass):
             c = CharacterClass(c)
         return c, i
@@ -681,4 +705,73 @@ escapes = {
 
 
 class Pattern(ABCReggy):
-    pass
+
+    def __init__(self, *concs):
+        self.concs = frozenset(concs)
+
+    def __eq__(self, other):
+        if not isinstance(other, Pattern):
+            return False
+        return self.concs == other.concs
+
+    def __hash__(self):
+        return hash(self.concs)
+
+    def __repr__(self):
+        string = "pattern("
+        string += "\n".join(repr(c) for c in self.concs)
+        string += ")"
+        return string
+
+    def times(self, multiplier):
+        if multiplier == one:
+            return self
+        return Mult(self, multiplier)
+
+    def concatenate(self, other):
+        return Mult(self, one) + other
+
+    def alphabet(self):
+        return {fsm.unspecified}.union(*[c.alphabet() for c in self.concs])
+
+    def empty(self):
+        for c in self.concs:
+            if not c.empty():
+                return False
+        return True
+
+    def intersection(self, other):
+        alphabet = self.alphabet() | other.alphabet()
+        return self.to_fsm(alphabet) & other.to_fsm(alphabet)
+
+    def union(self, other):
+        if isinstance(other, CharacterClass):
+            other = Mult(other, one)
+        if isinstance(other, Mult):
+            other = Conc(other)
+        if isinstance(other, Conc):
+            other = Pattern(other)
+
+        return Pattern(*(self.concs | other.concs))
+
+    def __str__(self):
+        return self.__repr__()
+
+    @classmethod
+    def match(cls, string, i=0):
+        concs = list()
+
+        c, i = Conc.match(string, i)
+        concs.append(c)
+
+        while c is not None and i < len(string):
+            if string[i] == ")":
+                return Pattern(*concs), i
+            if string[i] == "|":
+                c, i = Conc.match(string, i + 1)
+                concs.append(c)
+
+        if i == len(string) and c is not None:
+            concs.append(c)
+
+        return Pattern(*concs), i
