@@ -362,38 +362,6 @@ class FSM:
         """
         return not self.islive(self.initial)
 
-    def strings(self):
-        """
-        Generator for all accepting strings of this FSM.
-        NOTE: DO NOT ACTUALLY USE THIS. Uses lots of memory.
-        """
-        # only search through states that can lead to an accepting string
-        livestates = set(state for state in self.states if self.islive(state))
-
-        # store generated strings and states to make checking
-        # new strings faster
-        strings = []
-
-        cstate = self.initial
-        cstring = []
-        if cstate in livestates:
-            if cstate in self.accepting:
-                yield cstring
-            strings.append((cstring, cstate))
-
-        i = 0
-        while i < len(strings):
-            (cstring, cstate) = strings[i]
-            if cstate in self.transition:
-                for symbol in self.transition[cstate]:
-                    nstate = self.transition[cstate][symbol]
-                    nstring = cstring + [symbol]
-                    if nstate in livestates:
-                        if nstate in self.accepting:
-                            yield nstring
-                        strings.append((nstring, nstate))
-            i += 1
-
     def __iter__(self):
         return self.strings()
 
@@ -422,7 +390,7 @@ class FSM:
     def __sub__(self, other):
         return self.difference(other)
 
-    def isdisjoing(self, other):
+    def isdisjoint(self, other):
         return (self & other).empty()
 
     def issubset(self, other):

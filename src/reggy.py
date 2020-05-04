@@ -341,7 +341,7 @@ class Conc(ABCReggy):
         fsm1 = fsm.epsilon(alphabet)
         for m in self.mults:
             fsm1 += m.to_fsm(alphabet)
-        return fsm1.reduce()
+        return fsm1
 
     def alphabet(self):
         return {fsm.unspecified}.union(*[m.alphabet() for m in self.mults])
@@ -434,6 +434,9 @@ class Mult(ABCReggy):
 
         return Conc(self) & other
 
+    def empty(self):
+        return self.multiplicand.empty() and self.multiplier.minimum > Bound(0)
+
     def to_fsm(self, alphabet=None):
         if alphabet is None:
             alphabet = self.alphabet()
@@ -447,7 +450,7 @@ class Mult(ABCReggy):
             optional = fsm.epsilon(alphabet) | unit
             optional *= self.multiplier.optional.bound
 
-        return (mandatory + optional).reduce()
+        return (mandatory + optional)
 
     @classmethod
     def match(cls, string, i=0):
@@ -469,6 +472,9 @@ class Mult(ABCReggy):
 
     def copy(self):
         return Mult(self.multiplicand.copy(), self.muliplier.copy())
+
+    def alphabet(self):
+        return {fsm.unspecified} | self.multiplicand.alphabet()
 
 
 class CharacterClass(ABCReggy):
@@ -539,11 +545,11 @@ class CharacterClass(ABCReggy):
 
     def to_fsm(self, alphabet=None):
         if alphabet is None:
-            alphabet = self.alphabet
+            alphabet = self.alphabet()
 
         if self.negated:
             transition = {
-                0: dict([(symbol, 1) for symbol in alphabet - self.chars])
+                0: dict([(symbol, 1) for symbol in (alphabet - self.chars)])
             }
         else:
             transition = {
@@ -595,7 +601,7 @@ class CharacterClass(ABCReggy):
             return chars, i + 2
         elif string[i] == '\\':
             return string[i + 1], i + 2
-        elif string[i] in CharacterClass.special1:
+        elif string[i] in CharacterClass.special1 and not brackets:
             return None, i
         else:
             return string[i], i + 1
@@ -616,7 +622,8 @@ class CharacterClass(ABCReggy):
             return None, start
         cc = reduce(lambda x, y: x.union(y),
                     map(lambda x: x if isinstance(x, CharacterClass)
-                        else CharacterClass(x), chars))
+                        else CharacterClass(x), chars),
+                    CharacterClass())
         cc.negated = negated
         return cc, end + 1
 
@@ -657,16 +664,22 @@ class CharacterClass(ABCReggy):
             return ~CharacterClass(other.chars - self.chars)
         return CharacterClass(self.chars | other.chars)
 
+    def __or__(self, other):
+        return self.union(other)
+
     def intersection(self, other):
         if not isinstance(other, CharacterClass):
             return Mult(self, one) & other
-        if self.negate:
+        if self.negated:
             if other.negated:
                 return ~CharacterClass(self.chars | other.chars)
             return CharacterClass(other.chars - self.chars)
         if other.negated:
             return CharacterClass(self.chars - other.chars)
         return CharacterClass(self.chars & other.chars)
+
+    def __and__(self, other):
+        return self.intersection(other)
 
     def reversed(self):
         return self
@@ -707,7 +720,10 @@ escapes = {
 class Pattern(ABCReggy):
 
     def __init__(self, *concs):
-        self.concs = frozenset(concs)
+        if all([c is None for c in concs]):
+            self.concs = frozenset()
+        else:
+            self.concs = frozenset(concs)
 
     def __eq__(self, other):
         if not isinstance(other, Pattern):
@@ -775,3 +791,49 @@ class Pattern(ABCReggy):
             concs.append(c)
 
         return Pattern(*concs), i
+
+    def to_fsm(self, alphabet=None):
+        if alphabet is None:
+            alphabet = self.alphabet()
+
+        return reduce(
+            lambda x, y: x | y,
+            map(
+                lambda x: x.to_fsm(alphabet),
+                self.concs),
+            fsm.null(alphabet)
+        )
+
+    def equivalent(self, other):
+        return self.to_fsm().equivalent(other.to_fsm())
+
+
+class Reggy():
+    """
+    Actual regex class that will use the reggy backend.
+    """
+
+    def __init__(self, re):
+        self.re = re
+        self.pattern = Pattern.parse(re)
+        self.fsm = self.pattern.to_fsm().reduce()
+
+    def __str__(self):
+        return self.re
+
+    def __repr__(self):
+        return self.re
+
+    def matches(self, string):
+        return self.fsm.accepts(string)
+
+    def accepts(self, string):
+        return self.fsm.accepts(string)
+
+    def __contains__(self, string):
+        return self.fsm.accepts(string)
+
+    def isdisjoint(self, other):
+        if not isinstance(other, Reggy):
+            raise TypeError
+        return self.fsm.isdisjoint(other.fsm)
