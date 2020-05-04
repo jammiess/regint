@@ -1,5 +1,6 @@
 import fsm
 from functools import reduce
+import pickle
 
 
 class NotParseable(Exception):
@@ -813,10 +814,20 @@ class Reggy():
     Actual regex class that will use the reggy backend.
     """
 
-    def __init__(self, re):
-        self.re = re
-        self.pattern = Pattern.parse(re)
-        self.fsm = self.pattern.to_fsm().reduce()
+    def __init__(self, re, rep=None):
+        if rep is not None:
+            self.re = rep['re']
+            self.fsm = fsm.FSM(
+                rep['alphabet'],
+                rep['states'],
+                rep['initial'],
+                rep['accepting'],
+                rep['transition'],
+                __validation__=False
+            )
+        else:
+            self.re = re
+            self.fsm = Pattern.parse(self.re).to_fsm().reduce()
 
     def __str__(self):
         return self.re
@@ -837,3 +848,10 @@ class Reggy():
         if not isinstance(other, Reggy):
             raise TypeError
         return self.fsm.isdisjoint(other.fsm)
+
+    def to_pickle(self):
+        return pickle.dumps(self)
+
+    @classmethod
+    def from_pickle(cls, data):
+        return pickle.loads(data)
