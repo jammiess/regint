@@ -1,6 +1,7 @@
 import fsm
 from functools import reduce
-import pickle
+import json
+import re2 as re
 
 
 class NotParseable(Exception):
@@ -195,10 +196,16 @@ class Multiplier:
             return cls(Bound(1), Bound(1)), i
         # First check if multiplier is a special character
         elif string[i] == "?":
+            if i + 1 < len(string) and string[i + 1] in {"*", "?", "+"}:
+                raise NotParseable
             return cls(Bound(0), Bound(1)), i + 1
         elif string[i] == "*":
+            if i + 1 < len(string) and string[i + 1] in {"*", "?", "+"}:
+                raise NotParseable
             return cls(Bound(0), Bound(None)), i + 1
         elif string[i] == "+":
+            if i + 1 < len(string) and string[i + 1] in {"*", "?", "+"}:
+                raise NotParseable
             return cls(Bound(1), Bound(None)), i + 1
 
         # Check if curly brackets
@@ -207,14 +214,20 @@ class Multiplier:
 
             # If now at end brackets, require specifically that many
             if string[j] == "}":
+                if j + 1 < len(string) and string[j + 1] in {"*", "?", "+"}:
+                    raise NotParseable
                 return cls(lower, lower), j + 1
             # Then string[j] must be a comma.
             # If string[j + 1] is a } then it's lower - inf
             if string[j + 1] == "}":
+                if i + 1 < len(string) and string[i + 1] in {"*", "?", "+"}:
+                    raise NotParseable
                 return cls(lower, Bound(None)), j + 2
 
             # Last case is to parse the second part of the {}
             upper, j = Bound.match(string, j + 1)
+            if j < len(string) and string[j] in {"*", "?", "+"}:
+                raise NotParseable
             return cls(lower, upper), j + 1
 
         # if none of those things were found then return {1,1}
@@ -505,7 +518,7 @@ class CharacterClass(ABCReggy):
             return self
         return Mult(self, multiplier)
 
-    special1 = set(r"\[]|().?*+{}")
+    special1 = set(r"\[]|().?*+{}-")
     special2 = set(r"\[]^-")
 
     def __str__(self):
@@ -601,6 +614,8 @@ class CharacterClass(ABCReggy):
                 chars += chr(v)
             return chars, i + 2
         elif string[i] == '\\':
+            if string[i + 1] not in CharacterClass.special1:
+                raise NotParseable
             return string[i + 1], i + 2
         elif string[i] in CharacterClass.special1 and not brackets:
             return None, i
@@ -809,12 +824,25 @@ class Pattern(ABCReggy):
         return self.to_fsm().equivalent(other.to_fsm())
 
 
+def serialize(obj):
+    if isinstance(obj, fsm.UnspecifiedCharacter):
+        return obj.__dict__
+
+    raise TypeError
+
+
+def as_unspecified(dct):
+    if "__unspecified__" in dct:
+        return fsm.unspecified
+    return dct
+
+
 class Reggy():
     """
     Actual regex class that will use the reggy backend.
     """
 
-    def __init__(self, re, rep=None):
+    def __init__(self, regex, rep=None):
         if rep is not None:
             self.re = rep['re']
             self.fsm = fsm.FSM(
@@ -825,9 +853,17 @@ class Reggy():
                 rep['transition'],
                 __validation__=False
             )
-        else:
-            self.re = re
-            self.fsm = Pattern.parse(self.re).to_fsm().reduce()
+            self.pattern = re.compile(self.re)
+            return
+        if regex.find("[[") != -1:
+            raise NotParseable
+        if regex.find("\\p") != -1:
+            raise NotParseable
+        if regex.find("(?") != -1:
+            raise NotParseable
+        self.re = regex
+        self.fsm = Pattern.parse(self.re).to_fsm().reduce()
+        self.pattern = re.compile(self.re)
 
     def __str__(self):
         return self.re
@@ -836,10 +872,10 @@ class Reggy():
         return self.re
 
     def matches(self, string):
-        return self.fsm.accepts(string)
+        return self.pattern.fullmatch(string)
 
     def accepts(self, string):
-        return self.fsm.accepts(string)
+        return self.pattern.fullmatch(string)
 
     def __contains__(self, string):
         return self.fsm.accepts(string)
@@ -849,9 +885,17 @@ class Reggy():
             raise TypeError
         return self.fsm.isdisjoint(other.fsm)
 
-    def to_pickle(self):
-        return pickle.dumps(self)
+    def to_json(self):
+        return json.dumps({
+            're': self.re,
+            'alphabet': list(self.fsm.alphabet),
+            'states': list(self.fsm.states),
+            'initial': self.fsm.initial,
+            'accepting': list(self.fsm.accepting),
+            'transition': self.fsm.transition
+        }, default=serialize)
 
     @classmethod
-    def from_pickle(cls, data):
-        return pickle.loads(data)
+    def from_json(cls, data):
+        rep = json.loads(data, object_hook=as_unspecified)
+        return cls("", rep)

@@ -12,6 +12,9 @@ class UnspecifiedCharacter:
     in the input language.
     """
 
+    def __init__(self):
+        self.__unspecified__ = "unspecified"
+
     def __str__(self):
         return "unspecified"
 
