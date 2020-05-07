@@ -594,7 +594,7 @@ class CharacterClass(ABCReggy):
                     return k, i + len(shorthand[k])
         return None, i
 
-    def match_unit(string, i=0, brackets=False):
+    def match_unit(string, i=0, brackets=False, start=-1):
         cc, j = CharacterClass.match_wildcard(string, i)
         if cc is not None:
             return cc, j
@@ -604,6 +604,10 @@ class CharacterClass(ABCReggy):
             return None, i
         elif string[i] == '-' and not brackets:
             return '-', i + 1
+        elif string[i] == '-' and string[i + 1] == ']':
+            return '-', i + 1
+        elif string[i] == '-' and i - 1 == start:
+            return '0', i + 1
         elif string[i] == '-':
             s = ord(string[i - 1]) + 1
             e = ord(string[i + 1]) + 1
@@ -631,7 +635,7 @@ class CharacterClass(ABCReggy):
 
         chars = []
         while i < end:
-            c, i = CharacterClass.match_unit(string, i, True)
+            c, i = CharacterClass.match_unit(string, i, True, start)
             chars.append(c)
 
         if None in chars:
